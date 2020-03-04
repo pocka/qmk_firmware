@@ -15,9 +15,9 @@ extern uint8_t is_master;
 // Layer names don't all need to be of the same length, obviously, and you can also skip them
 // entirely and just use numbers.
 enum layer_number {
-    _QWERTY = 0,
-    _SYMBOLS,
-    _VIM
+  _QWERTY = 0,
+  _SYMBOLS,
+  _VIM
 };
 
 enum custom_keycodes {
@@ -112,9 +112,17 @@ void persistent_default_layer_set(uint16_t default_layer) {
 #define LAYER_HSV_VIM     HSV_CYAN
 #define LAYER_HSV_QWERTY  HSV_WHITE
 
+uint16_t oled_timer;
+bool oled_disabled = false;
+
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
   uint8_t ctrl_key = get_mods() & MOD_MASK_CTRL;
   uint8_t shift_key = get_mods() & MOD_MASK_SHIFT;
+
+  if (record->event.pressed) {
+    oled_timer = timer_read();
+    oled_disabled = false;
+  }
 
 
   switch (keycode) {
@@ -230,99 +238,150 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 }
 
 void matrix_init_user(void) {
-    //SSD1306 OLED init, make sure to add #define SSD1306OLED in config.h
-    #ifdef SSD1306OLED
-        iota_gfx_init(!has_usb());   // turns on the display
-    #endif
+  #ifdef SSD1306OLED
+    // Turn on the display
+    iota_gfx_init(!has_usb());
+  #endif
 
-    rgblight_enable();
-    rgblight_sethsv(LAYER_HSV_QWERTY);
+  rgblight_enable();
+  rgblight_sethsv(LAYER_HSV_QWERTY);
 }
 
 
 
-//SSD1306 OLED update loop, make sure to add #define SSD1306OLED in config.h
 #ifdef SSD1306OLED
 
+// Enable update loop
 void matrix_scan_user(void) {
-     iota_gfx_task();  // this is what updates the display continuously
+     iota_gfx_task();
 }
 
-void matrix_update(struct CharacterMatrix *dest,
-                          const struct CharacterMatrix *source) {
+void matrix_update(
+  struct CharacterMatrix *dest,
+  const struct CharacterMatrix *source
+) {
   if (memcmp(dest->display, source->display, sizeof(dest->display))) {
     memcpy(dest->display, source->display, sizeof(dest->display));
     dest->dirty = true;
   }
 }
 
-//assign the right code to your layers for OLED display
 #define L_BASE 0
 #define L_SYMBOLS (1<<_SYMBOLS)
 #define L_VIM (1<<_VIM)
 
-static void render_logo(struct CharacterMatrix *matrix) {
+#define OLED_ICON_PADDING PSTR("        ")
 
-  static const char helix_logo[] PROGMEM ={
-    0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,0x88,0x89,0x8a,0x8b,0x8c,0x8d,0x8e,0x8f,0x90,0x91,0x92,0x93,0x94,
-    0xa0,0xa1,0xa2,0xa3,0xa4,0xa5,0xa6,0xa7,0xa8,0xa9,0xaa,0xab,0xac,0xad,0xae,0xaf,0xb0,0xb1,0xb2,0xb3,0xb4,
-    0xc0,0xc1,0xc2,0xc3,0xc4,0xc5,0xc6,0xc7,0xc8,0xc9,0xca,0xcb,0xcc,0xcd,0xce,0xcf,0xd0,0xd1,0xd2,0xd3,0xd4,
-    0};
-  matrix_write_P(matrix, helix_logo);
-  //matrix_write_P(&matrix, PSTR(" Split keyboard kit"));
+static void render_status_icon(struct CharacterMatrix *matrix, uint8_t width, uint8_t height, const char icon[height][width]) {
+  for (uint8_t row = 0; row < height; row++) {
+    matrix_write_P(matrix, OLED_ICON_PADDING);
+    matrix_write_P(matrix, icon[row]);
+
+    if (row < height - 1) {
+      matrix_write_P(matrix, PSTR("\n"));
+    }
+  }
 }
 
 static void render_layer_status(struct CharacterMatrix *matrix) {
-  // Define layers here, Have not worked out how to have text displayed for each layer. Copy down the number you see and add a case for it below
-  char buf[10];
-  matrix_write_P(matrix, PSTR("Layer: "));
-    switch (layer_state) {
-        case L_BASE:
-           matrix_write_P(matrix, PSTR("Default"));
-           break;
-        case L_SYMBOLS:
-           matrix_write_P(matrix, PSTR("Symbols"));
-           break;
-        case L_VIM:
-           matrix_write_P(matrix, PSTR("VIM"));
-           break;
-        default:
-           matrix_write_P(matrix, PSTR("Undef-"));
-           snprintf(buf,sizeof(buf), "%ld", layer_state);
-           matrix_write(matrix, buf);
-    }
-}
+  static const char default_layer[][5] PROGMEM = {
+    {0x85, 0x86, 0x87, 0x88, 0},
+    {0xa5, 0xa6, 0xa7, 0xa8, 0},
+    {0xc5, 0xc6, 0xc7, 0xc8, 0}
+  };
 
-void render_status(struct CharacterMatrix *matrix) {
+  static const char symbol_layer[][6] PROGMEM = {
+    {0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0},
+    {0xa9, 0xaa, 0xab, 0xac, 0xad, 0},
+    {0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0}
+  };
 
-  // Render to mode icon
-  static const char os_logo[][2][3] PROGMEM  ={{{0x95,0x96,0},{0xb5,0xb6,0}},{{0x97,0x98,0},{0xb7,0xb8,0}}};
-  if(keymap_config.swap_lalt_lgui==false){
-    matrix_write_P(matrix, os_logo[0][0]);
-    matrix_write_P(matrix, PSTR("\n"));
-    matrix_write_P(matrix, os_logo[0][1]);
-  }else{
-    matrix_write_P(matrix, os_logo[1][0]);
-    matrix_write_P(matrix, PSTR("\n"));
-    matrix_write_P(matrix, os_logo[1][1]);
+  static const char vim_layer[][6] PROGMEM = {
+    {0x80, 0x81, 0x82, 0x83, 0x84, 0},
+    {0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0},
+    {0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0}
+  };
+
+  matrix_write_P(matrix, PSTR("\n"));
+
+  switch (layer_state) {
+    case L_BASE:
+      render_status_icon(matrix, 5, 3, default_layer);
+      break;
+    case L_SYMBOLS:
+      render_status_icon(matrix, 6, 3, symbol_layer);
+      break;
+    case L_VIM:
+      render_status_icon(matrix, 6, 3, vim_layer);
+      break;
   }
-
-  matrix_write_P(matrix, PSTR(" "));
-  render_layer_status(matrix);
-  matrix_write_P(matrix, PSTR("\n"));
-
-  // Host Keyboard LED Status
-  matrix_write_P(matrix, (host_keyboard_leds() & (1<<USB_LED_NUM_LOCK)) ?
-                 PSTR("NUMLOCK") : PSTR("       "));
-  matrix_write_P(matrix, (host_keyboard_leds() & (1<<USB_LED_CAPS_LOCK)) ?
-                 PSTR("CAPS") : PSTR("    "));
-  matrix_write_P(matrix, (host_keyboard_leds() & (1<<USB_LED_SCROLL_LOCK)) ?
-                 PSTR("SCLK") : PSTR("    "));
-  matrix_write_P(matrix, PSTR("\n"));
 }
 
+static void render_gopher(struct CharacterMatrix *matrix, uint16_t frame) {
+  static const char gopher_foot[5] PROGMEM = {0xce, 0xcf, 0xd0, 0xd1, 0};
+
+  static const char gopher_body_anim[][5] PROGMEM = {
+    {0xae, 0xaf, 0xb0, 0xb1, 0},
+    {0xb4, 0xaf, 0xb0, 0xb5, 0},
+  };
+
+  static const char gopher_head_anim[][5] PROGMEM = {
+    {0x8e, 0x8f, 0x90, 0x91, 0},
+    {0x8e, 0x96, 0x97, 0x91, 0},
+    {0x8e, 0xb6, 0xb7, 0x91, 0},
+    {0x8e, 0xd6, 0xd7, 0x91, 0},
+  };
+
+  matrix_write_P(matrix, PSTR("\n"));
+
+  // Head
+  uint8_t head_frame_index = 0;
+  switch (frame) {
+    case 5:
+    case 9:
+      head_frame_index = 1;
+      break;
+    case 6:
+    case 8:
+      head_frame_index = 2;
+      break;
+    case 7:
+      head_frame_index = 3;
+      break;
+  }
+  matrix_write_P(matrix, OLED_ICON_PADDING);
+  matrix_write_P(matrix, gopher_head_anim[head_frame_index]);
+  matrix_write_P(matrix, PSTR("\n"));
+
+  // Body
+  matrix_write_P(matrix, OLED_ICON_PADDING);
+  matrix_write_P(matrix, gopher_body_anim[frame % 50 > 25 ? 1 : 0]);
+  matrix_write_P(matrix, PSTR("\n"));
+
+  // Foot
+  matrix_write_P(matrix, OLED_ICON_PADDING);
+  matrix_write_P(matrix, gopher_foot);
+}
+
+#define ANIM_FRAME_INTERVAL 10
+#define ANIM_FRAME_MAX ANIM_FRAME_INTERVAL * 300
+
+// Display timeout in seconds
+#define OLED_TIMEOUT 60000
+
+uint16_t anim_frame = 0;
 
 void iota_gfx_task_user(void) {
+  if (oled_disabled) {
+    return;
+  }
+
+  if (timer_elapsed(oled_timer) > OLED_TIMEOUT) {
+    iota_gfx_off();
+    oled_disabled = true;
+    return;
+  }
+
   struct CharacterMatrix matrix;
 
 #if DEBUG_TO_SCREEN
@@ -333,10 +392,15 @@ void iota_gfx_task_user(void) {
 
   matrix_clear(&matrix);
   if(is_master){
-    render_status(&matrix);
-  }else{
-    render_logo(&matrix);
     render_layer_status(&matrix);
+  }else{
+    render_gopher(&matrix, anim_frame / ANIM_FRAME_INTERVAL);
+
+    anim_frame++;
+
+    if (anim_frame >= ANIM_FRAME_MAX) {
+      anim_frame = 0;
+    }
   }
   matrix_update(&display, &matrix);
 }
